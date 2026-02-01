@@ -12,7 +12,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        init_db()
+        await init_db()
         yield
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)

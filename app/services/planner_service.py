@@ -3,8 +3,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from redis import Redis
-from sqlalchemy.orm import Session
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.azure_openai import AzureOpenAIClient, parse_json_response
 from app.core.config import Settings, get_settings
@@ -96,14 +96,14 @@ class PlannerService:
         repository = PlanningRepository()
         return cls(settings, azure_openai, file_extractor, repository)
 
-    def handle_chat(
+    async def handle_chat(
         self,
         request: PlannerChatRequest,
-        db: Session,
+        db: AsyncSession,
         redis_client: Optional[Redis],
     ) -> PlannerChatResponse:
         task_id = request.task_id or str(uuid.uuid4())
-        session = self._repository.get_or_create_session(db, task_id)
+        session = await self._repository.get_or_create_session(db, task_id)
 
         if session.status == "approved" and session.latest_plan_json:
             return PlannerChatResponse(
@@ -116,17 +116,17 @@ class PlannerService:
             )
 
         for message in request.messages:
-            self._repository.add_message(db, task_id, message.role, message.content)
+            await self._repository.add_message(db, task_id, message.role, message.content)
 
-        file_context = self._file_extractor.build_file_context(request.uploaded_files)
-        result = self._generate_plan(
+        file_context = await self._file_extractor.build_file_context(request.uploaded_files)
+        result = await self._generate_plan(
             messages=request.messages,
             task_id=task_id,
             file_context=file_context.context_text,
             current_plan=session.latest_plan_json,
         )
 
-        self._repository.add_message(db, task_id, "assistant", result.assistant_message)
+        await self._repository.add_message(db, task_id, "assistant", result.assistant_message)
 
         plan_model: Optional[PlanJson] = None
         if result.intent == "TASK" and result.plan_json:
@@ -135,9 +135,9 @@ class PlannerService:
             status = result.status
             if plan_data.get("status") != status:
                 plan_data["status"] = status
-            self._repository.update_session(db, task_id, status=status, plan_json=plan_data)
+            await self._repository.update_session(db, task_id, status=status, plan_json=plan_data)
         else:
-            self._repository.update_session(db, task_id, status="cancelled", plan_json=None)
+            await self._repository.update_session(db, task_id, status="cancelled", plan_json=None)
 
         if redis_client:
             cache_payload = {
@@ -146,7 +146,7 @@ class PlannerService:
                 "intent": result.intent,
                 "plan_json": result.plan_json,
             }
-            redis_client.set(f"planner:session:{task_id}", json.dumps(cache_payload))
+            await redis_client.set(f"planner:session:{task_id}", json.dumps(cache_payload))
 
         return PlannerChatResponse(
             task_id=task_id,
@@ -163,7 +163,7 @@ class PlannerService:
             else None,
         )
 
-    def _generate_plan(
+    async def _generate_plan(
         self,
         messages: List[MessageItem],
         task_id: str,
@@ -196,7 +196,7 @@ class PlannerService:
 
         model_messages.extend([message.model_dump() for message in messages])
 
-        completion = self._azure_openai.chat_completion(
+        completion = await self._azure_openai.chat_completion(
             deployment=self._settings.azure_openai_gpt52_deployment,
             messages=model_messages,
             temperature=self._settings.planning_temperature,

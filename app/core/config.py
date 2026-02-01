@@ -28,14 +28,16 @@ class Settings(BaseSettings):
     azure_blob_account_key: Optional[str] = Field(default=None, alias="AZURE_BLOB_ACCOUNT_KEY")
 
     redis_url: Optional[str] = Field(default=None, alias="REDIS_URL")
-    sql_database_url: str = Field(default="sqlite:///./planner.db", alias="SQL_DATABASE_URL")
+    sql_database_url: str = Field(
+        default="sqlite+aiosqlite:///./planner.db", alias="SQL_DATABASE_URL"
+    )
 
     max_file_context_chars: int = Field(default=6000, alias="MAX_FILE_CONTEXT_CHARS")
     max_file_rows: int = Field(default=200, alias="MAX_FILE_ROWS")
     max_ocr_pages: int = Field(default=10, alias="MAX_OCR_PAGES")
     min_pdf_text_chars: int = Field(default=50, alias="MIN_PDF_TEXT_CHARS")
     planning_max_tokens: int = Field(default=2500, alias="PLANNING_MAX_TOKENS")
-    planning_temperature: float = Field(default=0.2, alias="PLANNING_TEMPERATURE")
+    planning_temperature: Optional[float] = Field(default=None, alias="PLANNING_TEMPERATURE")
 
 
 @lru_cache(maxsize=1)

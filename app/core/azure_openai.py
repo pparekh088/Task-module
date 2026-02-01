@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
 
 from app.core.config import Settings
 
@@ -20,32 +20,34 @@ class AzureOpenAIClient:
             raise ValueError("Azure OpenAI configuration is missing.")
 
         self._settings = settings
-        self._client = AzureOpenAI(
+        self._client = AsyncAzureOpenAI(
             api_key=settings.azure_openai_api_key,
             api_version=settings.azure_openai_api_version,
             azure_endpoint=settings.azure_openai_endpoint,
         )
 
-    def chat_completion(
+    async def chat_completion(
         self,
         deployment: str,
         messages: List[Dict[str, str]],
-        temperature: float,
+        temperature: Optional[float],
         max_tokens: int,
         expect_json: bool = False,
     ) -> ChatResult:
-        response_format = {"type": "json_object"} if expect_json else None
-        response = self._client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format=response_format,
-        )
+        payload: Dict[str, Any] = {
+            "model": deployment,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if expect_json:
+            payload["response_format"] = {"type": "json_object"}
+        response = await self._client.chat.completions.create(**payload)
         content = response.choices[0].message.content or ""
         return ChatResult(content=content, raw=response)
 
-    def vision_ocr(self, image_bytes: bytes, content_type: str) -> str:
+    async def vision_ocr(self, image_bytes: bytes, content_type: str) -> str:
         if not self._settings.azure_openai_vision_deployment:
             raise ValueError("Azure OpenAI vision deployment is not configured.")
 
@@ -64,7 +66,7 @@ class AzureOpenAIClient:
                 ],
             },
         ]
-        response = self._client.chat.completions.create(
+        response = await self._client.chat.completions.create(
             model=self._settings.azure_openai_vision_deployment,
             messages=messages,
             temperature=0.0,

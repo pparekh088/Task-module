@@ -1,6 +1,6 @@
 from typing import Optional
 
-from redis import Redis
+from redis.asyncio import Redis
 
 from app.core.config import get_settings
 

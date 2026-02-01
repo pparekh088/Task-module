@@ -1,6 +1,6 @@
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.db.models import Base, PlanningSession
@@ -11,16 +11,15 @@ from tests.utils import StubAzureOpenAI, StubFileExtractor, sample_plan_json
 
 
 @pytest.fixture()
-def db_session(tmp_path):
-    db_url = f"sqlite:///{tmp_path}/planner.db"
-    engine = create_engine(db_url, connect_args={"check_same_thread": False}, future=True)
-    Base.metadata.create_all(bind=engine)
-    session_local = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
-    session = session_local()
-    try:
+async def db_session(tmp_path) -> AsyncSession:
+    db_url = f"sqlite+aiosqlite:///{tmp_path}/planner.db"
+    engine = create_async_engine(db_url, future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_local = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_local() as session:
         yield session
-    finally:
-        session.close()
+    await engine.dispose()
 
 
 def test_normalize_status_variants():
@@ -31,8 +30,8 @@ def test_normalize_status_variants():
     assert normalize(None, "TASK") == "awaiting_user_approval"
     assert normalize("unknown", "NON_TASK") == "cancelled"
 
-
-def test_handle_chat_persists_plan(db_session):
+@pytest.mark.anyio
+async def test_handle_chat_persists_plan(db_session: AsyncSession):
     plan_payload = sample_plan_json()
     azure_stub = StubAzureOpenAI(
         {
@@ -57,7 +56,7 @@ def test_handle_chat_persists_plan(db_session):
         messages=[MessageItem(role="user", content="Plan this task.")],
         uploaded_files=["file.csv"],
     )
-    response = service.handle_chat(request, db_session, redis_client=None)
+    response = await service.handle_chat(request, db_session, redis_client=None)
 
     assert response.intent == "TASK"
     assert response.status == "awaiting_user_approval"
@@ -67,10 +66,9 @@ def test_handle_chat_persists_plan(db_session):
     assert file_extractor.last_uploaded_files == ["file.csv"]
     assert response.file_context_used is not None
 
-    stored = (
-        db_session.query(PlanningSession)
-        .filter(PlanningSession.task_id == response.task_id)
-        .first()
+    result = await db_session.execute(
+        select(PlanningSession).where(PlanningSession.task_id == response.task_id)
     )
+    stored = result.scalar_one_or_none()
     assert stored is not None
     assert stored.latest_plan_json["plan_id"] == plan_payload["plan_id"]

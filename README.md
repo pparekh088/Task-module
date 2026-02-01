@@ -24,7 +24,8 @@ for user approval.
    pip install -r requirements.txt
    ```
 
-2. Configure environment variables (see `.env.example`).
+2. Configure environment variables (see `.env.example`). For local SQLite, use:
+   `SQL_DATABASE_URL=sqlite+aiosqlite:///./planner.db`
 
 3. Run the service:
    ```bash

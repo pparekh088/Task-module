@@ -3,6 +3,7 @@ import mimetypes
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+import anyio
 import fitz
 import pandas as pd
 from azure.storage.blob import BlobClient, BlobServiceClient
@@ -38,36 +39,11 @@ class FileExtractionService:
                 settings.azure_blob_connection_string
             )
 
-    def build_file_context(self, uploaded_files: List[str]) -> FileContext:
+    async def build_file_context(self, uploaded_files: List[str]) -> FileContext:
         results: List[FileExtractionResult] = []
         for blob_ref in uploaded_files:
-            try:
-                data, filename, content_type = self._download_blob(blob_ref)
-                text, truncated, notes = self._extract_text(
-                    data=data, filename=filename, content_type=content_type
-                )
-                results.append(
-                    FileExtractionResult(
-                        blob_ref=blob_ref,
-                        filename=filename,
-                        content_type=content_type,
-                        text=text,
-                        truncated=truncated,
-                        notes=notes,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 - capture extraction failures
-                results.append(
-                    FileExtractionResult(
-                        blob_ref=blob_ref,
-                        filename=blob_ref.split("/")[-1],
-                        content_type="unknown",
-                        text="",
-                        truncated=False,
-                        notes=[],
-                        error=str(exc),
-                    )
-                )
+            result = await self._process_blob(blob_ref)
+            results.append(result)
 
         context_text = self._assemble_context(results)
         summaries = [
@@ -82,6 +58,33 @@ class FileExtractionService:
             for result in results
         ]
         return FileContext(context_text=context_text, summaries=summaries)
+
+    async def _process_blob(self, blob_ref: str) -> FileExtractionResult:
+        try:
+            data, filename, content_type = await anyio.to_thread.run_sync(
+                self._download_blob, blob_ref
+            )
+            text, truncated, notes = await self._extract_text(
+                data=data, filename=filename, content_type=content_type
+            )
+            return FileExtractionResult(
+                blob_ref=blob_ref,
+                filename=filename,
+                content_type=content_type,
+                text=text,
+                truncated=truncated,
+                notes=notes,
+            )
+        except Exception as exc:  # noqa: BLE001 - capture extraction failures
+            return FileExtractionResult(
+                blob_ref=blob_ref,
+                filename=blob_ref.split("/")[-1],
+                content_type="unknown",
+                text="",
+                truncated=False,
+                notes=[],
+                error=str(exc),
+            )
 
     def _download_blob(self, blob_ref: str) -> Tuple[bytes, str, str]:
         if blob_ref.startswith("file://"):
@@ -110,7 +113,7 @@ class FileExtractionService:
         filename = blob_ref.split("/")[-1]
         return data, filename, content_type
 
-    def _extract_text(
+    async def _extract_text(
         self, data: bytes, filename: str, content_type: str
     ) -> Tuple[str, bool, List[str]]:
         ext = filename.lower().split(".")[-1] if "." in filename else ""
@@ -118,25 +121,27 @@ class FileExtractionService:
         truncated = False
 
         if ext in {"csv"}:
-            text, truncated = self._extract_table(data, "csv")
+            text, truncated = await anyio.to_thread.run_sync(self._extract_table, data, "csv")
             return text, truncated, notes
         if ext in {"xlsx", "xls"}:
-            text, truncated = self._extract_table(data, "excel")
+            text, truncated = await anyio.to_thread.run_sync(self._extract_table, data, "excel")
             return text, truncated, notes
         if ext in {"txt", "md", "log", "json"}:
-            return data.decode("utf-8", errors="replace"), False, notes
+            text = await anyio.to_thread.run_sync(self._decode_text, data)
+            return text, False, notes
         if ext in {"pdf"} or content_type == "application/pdf":
-            text, ocr_used = self._extract_pdf_text(data)
+            text, ocr_used = await self._extract_pdf_text(data)
             if ocr_used:
                 notes.append("OCR used for scanned PDF pages.")
             return text, False, notes
         if ext in {"png", "jpg", "jpeg"} or content_type.startswith("image/"):
-            text = self._extract_image_text(data, content_type)
+            text = await self._extract_image_text(data, content_type)
             notes.append("OCR used for image.")
             return text, False, notes
 
         try:
-            return data.decode("utf-8", errors="replace"), False, notes
+            text = await anyio.to_thread.run_sync(self._decode_text, data)
+            return text, False, notes
         except UnicodeDecodeError:
             notes.append("Binary file could not be decoded.")
             return "", False, notes
@@ -154,10 +159,47 @@ class FileExtractionService:
             truncated = True
         return frame.to_csv(index=False), truncated
 
-    def _extract_pdf_text(self, data: bytes) -> Tuple[str, bool]:
-        min_chars = self._settings.min_pdf_text_chars
+    async def _extract_pdf_text(self, data: bytes) -> Tuple[str, bool]:
+        ocr_enabled = bool(
+            self._azure_openai and self._settings.azure_openai_vision_deployment
+        )
+        combined, ocr_images = await anyio.to_thread.run_sync(
+            self._extract_pdf_sync,
+            data,
+            self._settings.min_pdf_text_chars,
+            ocr_enabled,
+            self._settings.max_ocr_pages,
+        )
+
         ocr_used = False
+        if ocr_images and self._azure_openai:
+            ocr_chunks: List[str] = []
+            for image_bytes in ocr_images:
+                ocr_text = await self._azure_openai.vision_ocr(image_bytes, "image/png")
+                if ocr_text:
+                    ocr_chunks.append(ocr_text)
+            if ocr_chunks:
+                ocr_used = True
+                combined = "\n".join([combined, "\n".join(ocr_chunks)]).strip()
+
+        return combined, ocr_used
+
+    async def _extract_image_text(self, data: bytes, content_type: str) -> str:
+        if not self._azure_openai:
+            raise RuntimeError("Azure OpenAI client is not configured for OCR.")
+        if not content_type.startswith("image/"):
+            content_type = "image/png"
+        return await self._azure_openai.vision_ocr(data, content_type)
+
+    @staticmethod
+    def _extract_pdf_sync(
+        data: bytes,
+        min_chars: int,
+        ocr_enabled: bool,
+        max_pages: int,
+    ) -> Tuple[str, List[bytes]]:
         text_chunks: List[str] = []
+        ocr_images: List[bytes] = []
         doc = fitz.open(stream=data, filetype="pdf")
         for page in doc:
             page_text = page.get_text("text")
@@ -165,37 +207,18 @@ class FileExtractionService:
                 text_chunks.append(page_text)
         combined = "\n".join(text_chunks).strip()
 
-        if len(combined) < min_chars:
-            ocr_text = self._ocr_pdf(doc)
-            if ocr_text:
-                ocr_used = True
-                combined = "\n".join([combined, ocr_text]).strip()
+        if ocr_enabled and len(combined) < min_chars:
+            page_count = min(max_pages, doc.page_count)
+            for page_index in range(page_count):
+                page = doc.load_page(page_index)
+                pix = page.get_pixmap(dpi=200)
+                ocr_images.append(pix.tobytes("png"))
         doc.close()
-        return combined, ocr_used
+        return combined, ocr_images
 
-    def _ocr_pdf(self, doc: fitz.Document) -> str:
-        if not self._azure_openai:
-            return ""
-        if not self._settings.azure_openai_vision_deployment:
-            return ""
-        max_pages = self._settings.max_ocr_pages
-        ocr_chunks: List[str] = []
-        for page_number, page in enumerate(doc, start=1):
-            if page_number > max_pages:
-                break
-            pix = page.get_pixmap(dpi=200)
-            image_bytes = pix.tobytes("png")
-            ocr_text = self._azure_openai.vision_ocr(image_bytes, "image/png")
-            if ocr_text:
-                ocr_chunks.append(ocr_text)
-        return "\n".join(ocr_chunks).strip()
-
-    def _extract_image_text(self, data: bytes, content_type: str) -> str:
-        if not self._azure_openai:
-            raise RuntimeError("Azure OpenAI client is not configured for OCR.")
-        if not content_type.startswith("image/"):
-            content_type = "image/png"
-        return self._azure_openai.vision_ocr(data, content_type)
+    @staticmethod
+    def _decode_text(data: bytes) -> str:
+        return data.decode("utf-8", errors="replace")
 
     def _assemble_context(self, results: List[FileExtractionResult]) -> str:
         chunks: List[str] = []

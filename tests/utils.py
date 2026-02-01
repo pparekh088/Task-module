@@ -42,17 +42,20 @@ class StubAzureOpenAI:
         self.response_payload = response_payload
         self.last_messages: Optional[List[Dict[str, Any]]] = None
 
-    def chat_completion(  # noqa: D401 - test stub signature
+    async def chat_completion(  # noqa: D401 - test stub signature
         self,
         deployment: str,
         messages: List[Dict[str, Any]],
-        temperature: float,
+        temperature: Optional[float],
         max_tokens: int,
         expect_json: bool = False,
     ) -> ChatResult:
         self.last_messages = messages
         content = json.dumps(self.response_payload)
         return ChatResult(content=content, raw={"stubbed": True})
+
+    async def vision_ocr(self, image_bytes: bytes, content_type: str) -> str:
+        return ""
 
 
 class StubFileExtractor:
@@ -61,6 +64,6 @@ class StubFileExtractor:
         self.summaries = summaries or []
         self.last_uploaded_files: Optional[List[str]] = None
 
-    def build_file_context(self, uploaded_files: List[str]) -> FileContext:
+    async def build_file_context(self, uploaded_files: List[str]) -> FileContext:
         self.last_uploaded_files = uploaded_files
         return FileContext(context_text=self.context_text, summaries=self.summaries)
