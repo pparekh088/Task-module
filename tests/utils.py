@@ -64,6 +64,8 @@ class StubFileExtractor:
         self.summaries = summaries or []
         self.last_uploaded_files: Optional[List[str]] = None
 
-    async def build_file_context(self, uploaded_files: List[str]) -> FileContext:
+    async def build_file_context(
+        self, uploaded_files: List[str], redis_client: Optional[object] = None
+    ) -> FileContext:
         self.last_uploaded_files = uploaded_files
         return FileContext(context_text=self.context_text, summaries=self.summaries)

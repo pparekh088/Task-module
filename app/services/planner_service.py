@@ -118,7 +118,9 @@ class PlannerService:
         for message in request.messages:
             await self._repository.add_message(db, task_id, message.role, message.content)
 
-        file_context = await self._file_extractor.build_file_context(request.uploaded_files)
+        file_context = await self._file_extractor.build_file_context(
+            request.uploaded_files, redis_client=redis_client
+        )
         result = await self._generate_plan(
             messages=request.messages,
             task_id=task_id,

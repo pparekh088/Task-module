@@ -1,12 +1,17 @@
 import io
+import json
 import mimetypes
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 import anyio
 import fitz
 import pandas as pd
 from azure.storage.blob import BlobClient, BlobServiceClient
+from redis.asyncio import Redis
 
 from app.core.azure_openai import AzureOpenAIClient
 from app.core.config import Settings
@@ -21,6 +26,10 @@ class FileExtractionResult:
     truncated: bool
     notes: List[str] = field(default_factory=list)
     error: Optional[str] = None
+    cached: bool = False
+    cache_truncated: bool = False
+    original_length: Optional[int] = None
+    cached_at: Optional[str] = None
 
 
 @dataclass
@@ -39,14 +48,24 @@ class FileExtractionService:
                 settings.azure_blob_connection_string
             )
 
-    async def build_file_context(self, uploaded_files: List[str]) -> FileContext:
+    async def build_file_context(
+        self,
+        uploaded_files: List[str],
+        redis_client: Optional[Redis] = None,
+    ) -> FileContext:
         if not uploaded_files:
             return FileContext(context_text="", summaries=[])
 
         results: List[Optional[FileExtractionResult]] = [None] * len(uploaded_files)
 
         async def worker(index: int, blob_ref: str) -> None:
-            results[index] = await self._process_blob(blob_ref)
+            cached_result = await self._load_cached(redis_client, blob_ref)
+            if cached_result:
+                results[index] = cached_result
+                return
+            result = await self._process_blob(blob_ref)
+            results[index] = result
+            await self._store_cached(redis_client, blob_ref, result)
 
         async with anyio.create_task_group() as task_group:
             for index, blob_ref in enumerate(uploaded_files):
@@ -65,6 +84,10 @@ class FileExtractionService:
                 "truncated": result.truncated,
                 "notes": result.notes,
                 "error": result.error,
+                "cached": result.cached,
+                "cache_truncated": result.cache_truncated,
+                "original_length": result.original_length,
+                "cached_at": result.cached_at,
             }
             for result in resolved_results
         ]
@@ -123,6 +146,90 @@ class FileExtractionService:
         data = blob_client.download_blob().readall()
         filename = blob_ref.split("/")[-1]
         return data, filename, content_type
+
+    def _cache_key(self, blob_ref: str) -> str:
+        key_source = blob_ref
+        if blob_ref.startswith("https://"):
+            parts = urlsplit(blob_ref)
+            key_source = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        elif blob_ref.startswith("file://"):
+            key_source = blob_ref[len("file://") :]
+        digest = sha256(key_source.encode("utf-8")).hexdigest()
+        return f"planner:file:{digest}"
+
+    async def _load_cached(
+        self, redis_client: Optional[Redis], blob_ref: str
+    ) -> Optional[FileExtractionResult]:
+        if not redis_client or not self._settings.redis_file_cache_enabled:
+            return None
+        key = self._cache_key(blob_ref)
+        cached_raw = await redis_client.get(key)
+        if not cached_raw:
+            return None
+        try:
+            payload = json.loads(cached_raw)
+        except json.JSONDecodeError:
+            return None
+
+        notes = payload.get("notes") or []
+        cache_truncated = bool(payload.get("cache_truncated"))
+        if cache_truncated:
+            max_chars = payload.get("cache_max_chars")
+            notes = list(notes) + [f"Cached content truncated to {max_chars} characters."]
+
+        return FileExtractionResult(
+            blob_ref=payload.get("blob_ref", blob_ref),
+            filename=payload.get("filename", blob_ref.split("/")[-1]),
+            content_type=payload.get("content_type", "unknown"),
+            text=payload.get("text", ""),
+            truncated=bool(payload.get("truncated", False)),
+            notes=notes,
+            error=payload.get("error"),
+            cached=True,
+            cache_truncated=cache_truncated,
+            original_length=payload.get("original_length"),
+            cached_at=payload.get("cached_at"),
+        )
+
+    async def _store_cached(
+        self,
+        redis_client: Optional[Redis],
+        blob_ref: str,
+        result: FileExtractionResult,
+    ) -> None:
+        if not redis_client or not self._settings.redis_file_cache_enabled:
+            return
+        if result.error:
+            return
+
+        cache_max_chars = self._settings.redis_file_cache_max_chars
+        cache_truncated = False
+        original_length = len(result.text)
+        cache_text = result.text
+        if cache_max_chars > 0 and original_length > cache_max_chars:
+            cache_text = result.text[:cache_max_chars]
+            cache_truncated = True
+
+        payload = {
+            "blob_ref": blob_ref,
+            "filename": result.filename,
+            "content_type": result.content_type,
+            "text": cache_text,
+            "truncated": result.truncated,
+            "notes": result.notes,
+            "error": result.error,
+            "cache_truncated": cache_truncated,
+            "cache_max_chars": cache_max_chars,
+            "original_length": original_length,
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+            "schema_version": 1,
+        }
+        key = self._cache_key(blob_ref)
+        ttl_seconds = self._settings.redis_file_cache_ttl_seconds
+        if ttl_seconds and ttl_seconds > 0:
+            await redis_client.setex(key, ttl_seconds, json.dumps(payload))
+        else:
+            await redis_client.set(key, json.dumps(payload))
 
     async def _extract_text(
         self, data: bytes, filename: str, content_type: str

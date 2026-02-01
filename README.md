@@ -14,6 +14,7 @@ for user approval.
 - Structured plan JSON output with tool mapping
 - SQL persistence for messages + plans
 - Redis cache for active planning state
+- Redis cache for extracted file text (optional)
 
 ## Quick Start
 
@@ -40,6 +41,15 @@ Run unit and integration tests with:
 ```bash
 pytest
 ```
+
+## Redis File Content Cache (Optional)
+
+The planner can cache extracted file text + metadata in Redis to avoid repeat
+parsing/OCR. Configure TTL and size limits with:
+
+- `REDIS_FILE_CACHE_ENABLED`
+- `REDIS_FILE_CACHE_TTL_SECONDS`
+- `REDIS_FILE_CACHE_MAX_CHARS`
 
 ## Planner Endpoint
 

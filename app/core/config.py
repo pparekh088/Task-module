@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     azure_blob_account_key: Optional[str] = Field(default=None, alias="AZURE_BLOB_ACCOUNT_KEY")
 
     redis_url: Optional[str] = Field(default=None, alias="REDIS_URL")
+    redis_file_cache_enabled: bool = Field(default=True, alias="REDIS_FILE_CACHE_ENABLED")
+    redis_file_cache_ttl_seconds: int = Field(
+        default=3600, alias="REDIS_FILE_CACHE_TTL_SECONDS"
+    )
+    redis_file_cache_max_chars: int = Field(
+        default=12000, alias="REDIS_FILE_CACHE_MAX_CHARS"
+    )
     sql_database_url: str = Field(
         default="sqlite+aiosqlite:///./planner.db", alias="SQL_DATABASE_URL"
     )
