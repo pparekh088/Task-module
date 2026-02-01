@@ -31,6 +31,13 @@ for user approval.
    uvicorn app.main:app --host 0.0.0.0 --port 8000
    ```
 
+## Tests
+
+Run unit and integration tests with:
+```bash
+pytest
+```
+
 ## Planner Endpoint
 
 `POST /planner/chat`
