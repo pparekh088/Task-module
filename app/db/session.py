@@ -24,7 +24,7 @@ def get_engine() -> AsyncEngine:
     global _engine, _sessionmaker
     if _engine is None:
         settings = get_settings()
-        db_url = _normalize_async_url(settings.sql_database_url)
+        db_url = _normalize_async_url(settings.resolve_database_url())
         _engine = create_async_engine(db_url, pool_pre_ping=True, future=True)
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
