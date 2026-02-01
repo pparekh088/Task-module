@@ -20,13 +20,6 @@ class Settings(BaseSettings):
         default=None, alias="AZURE_OPENAI_VISION_DEPLOYMENT"
     )
 
-    azure_blob_connection_string: Optional[str] = Field(
-        default=None, alias="AZURE_BLOB_CONNECTION_STRING"
-    )
-    azure_blob_container: Optional[str] = Field(default=None, alias="AZURE_BLOB_CONTAINER")
-    azure_blob_sas_token: Optional[str] = Field(default=None, alias="AZURE_BLOB_SAS_TOKEN")
-    azure_blob_account_key: Optional[str] = Field(default=None, alias="AZURE_BLOB_ACCOUNT_KEY")
-
     redis_url: Optional[str] = Field(default=None, alias="REDIS_URL")
     redis_file_cache_enabled: bool = Field(default=True, alias="REDIS_FILE_CACHE_ENABLED")
     redis_file_cache_ttl_seconds: int = Field(

@@ -51,6 +51,9 @@ parsing/OCR. Configure TTL and size limits with:
 - `REDIS_FILE_CACHE_TTL_SECONDS`
 - `REDIS_FILE_CACHE_MAX_CHARS`
 
+This service does not fetch from Azure Blob directly. Provide local `file://`
+paths or pre-cache extracted content in Redis.
+
 ## Planner Endpoint
 
 `POST /planner/chat`
@@ -62,7 +65,7 @@ Example request:
   "messages": [
     {"role": "user", "content": "Summarize this spreadsheet and draft a report."}
   ],
-  "uploaded_files": ["sample.xlsx"]
+  "uploaded_files": ["file:///data/sample.xlsx"]
 }
 ```
 

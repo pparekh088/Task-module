@@ -10,7 +10,6 @@ from urllib.parse import urlsplit, urlunsplit
 import anyio
 import fitz
 import pandas as pd
-from azure.storage.blob import BlobClient, BlobServiceClient
 from redis.asyncio import Redis
 
 from app.core.azure_openai import AzureOpenAIClient
@@ -42,11 +41,6 @@ class FileExtractionService:
     def __init__(self, settings: Settings, azure_openai: Optional[AzureOpenAIClient]) -> None:
         self._settings = settings
         self._azure_openai = azure_openai
-        self._blob_service_client: Optional[BlobServiceClient] = None
-        if settings.azure_blob_connection_string:
-            self._blob_service_client = BlobServiceClient.from_connection_string(
-                settings.azure_blob_connection_string
-            )
 
     async def build_file_context(
         self,
@@ -121,31 +115,20 @@ class FileExtractionService:
             )
 
     def _download_blob(self, blob_ref: str) -> Tuple[bytes, str, str]:
-        if blob_ref.startswith("file://"):
-            path = blob_ref[len("file://") :]
-            with open(path, "rb") as handle:
-                data = handle.read()
-            content_type, _ = mimetypes.guess_type(path)
-            return data, path.split("/")[-1], content_type or "application/octet-stream"
-
-        if blob_ref.startswith("https://"):
-            credential = self._settings.azure_blob_sas_token or self._settings.azure_blob_account_key
-            blob_client = BlobClient.from_blob_url(blob_ref, credential=credential)
-        else:
-            if not self._blob_service_client:
-                raise RuntimeError("Azure Blob connection string is not configured.")
-            if not self._settings.azure_blob_container:
-                raise RuntimeError("Azure Blob container is not configured.")
-            blob_client = self._blob_service_client.get_blob_client(
-                container=self._settings.azure_blob_container,
-                blob=blob_ref,
+        if blob_ref.startswith(("http://", "https://")):
+            raise RuntimeError(
+                "Remote blob references are disabled. "
+                "Provide a file:// path or ensure the extracted content is cached in Redis."
             )
 
-        props = blob_client.get_blob_properties()
-        content_type = props.content_settings.content_type or "application/octet-stream"
-        data = blob_client.download_blob().readall()
-        filename = blob_ref.split("/")[-1]
-        return data, filename, content_type
+        path = blob_ref
+        if blob_ref.startswith("file://"):
+            path = blob_ref[len("file://") :]
+
+        with open(path, "rb") as handle:
+            data = handle.read()
+        content_type, _ = mimetypes.guess_type(path)
+        return data, path.split("/")[-1], content_type or "application/octet-stream"
 
     def _cache_key(self, blob_ref: str) -> str:
         key_source = blob_ref
