@@ -46,8 +46,8 @@ class StubAzureOpenAI:
         self,
         deployment: str,
         messages: List[Dict[str, Any]],
+        max_output_tokens: int,
         temperature: Optional[float],
-        max_tokens: int,
         expect_json: bool = False,
     ) -> ChatResult:
         self.last_messages = messages

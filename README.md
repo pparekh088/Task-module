@@ -26,6 +26,8 @@ for user approval.
 
 2. Configure environment variables (see `.env.example`). For local SQLite, use:
    `SQL_DATABASE_URL=sqlite+aiosqlite:///./planner.db`
+   Optionally set `PLANNING_MAX_OUTPUT_TOKENS` and omit `PLANNING_TEMPERATURE`
+   for GPT-5.2 thinking models.
 
 3. Run the service:
    ```bash

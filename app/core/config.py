@@ -36,7 +36,12 @@ class Settings(BaseSettings):
     max_file_rows: int = Field(default=200, alias="MAX_FILE_ROWS")
     max_ocr_pages: int = Field(default=10, alias="MAX_OCR_PAGES")
     min_pdf_text_chars: int = Field(default=50, alias="MIN_PDF_TEXT_CHARS")
-    planning_max_tokens: int = Field(default=2500, alias="PLANNING_MAX_TOKENS")
+    planning_max_output_tokens: int = Field(
+        default=2500, alias="PLANNING_MAX_OUTPUT_TOKENS"
+    )
+    planning_max_tokens: Optional[int] = Field(
+        default=None, alias="PLANNING_MAX_TOKENS"
+    )
     planning_temperature: Optional[float] = Field(default=None, alias="PLANNING_TEMPERATURE")
 
 

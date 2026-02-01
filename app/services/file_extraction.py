@@ -40,12 +40,23 @@ class FileExtractionService:
             )
 
     async def build_file_context(self, uploaded_files: List[str]) -> FileContext:
-        results: List[FileExtractionResult] = []
-        for blob_ref in uploaded_files:
-            result = await self._process_blob(blob_ref)
-            results.append(result)
+        if not uploaded_files:
+            return FileContext(context_text="", summaries=[])
 
-        context_text = self._assemble_context(results)
+        results: List[Optional[FileExtractionResult]] = [None] * len(uploaded_files)
+
+        async def worker(index: int, blob_ref: str) -> None:
+            results[index] = await self._process_blob(blob_ref)
+
+        async with anyio.create_task_group() as task_group:
+            for index, blob_ref in enumerate(uploaded_files):
+                task_group.start_soon(worker, index, blob_ref)
+
+        resolved_results: List[FileExtractionResult] = [
+            result for result in results if result is not None
+        ]
+
+        context_text = self._assemble_context(resolved_results)
         summaries = [
             {
                 "blob_ref": result.blob_ref,
@@ -55,7 +66,7 @@ class FileExtractionService:
                 "notes": result.notes,
                 "error": result.error,
             }
-            for result in results
+            for result in resolved_results
         ]
         return FileContext(context_text=context_text, summaries=summaries)
 

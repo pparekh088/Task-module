@@ -196,11 +196,15 @@ class PlannerService:
 
         model_messages.extend([message.model_dump() for message in messages])
 
+        max_output_tokens = self._settings.planning_max_output_tokens
+        if self._settings.planning_max_tokens:
+            max_output_tokens = self._settings.planning_max_tokens
+
         completion = await self._azure_openai.chat_completion(
             deployment=self._settings.azure_openai_gpt52_deployment,
             messages=model_messages,
+            max_output_tokens=max_output_tokens,
             temperature=self._settings.planning_temperature,
-            max_tokens=self._settings.planning_max_tokens,
             expect_json=True,
         )
         payload = parse_json_response(completion.content)

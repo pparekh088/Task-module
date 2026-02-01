@@ -30,14 +30,14 @@ class AzureOpenAIClient:
         self,
         deployment: str,
         messages: List[Dict[str, str]],
+        max_output_tokens: int,
         temperature: Optional[float],
-        max_tokens: int,
         expect_json: bool = False,
     ) -> ChatResult:
         payload: Dict[str, Any] = {
             "model": deployment,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_output_tokens,
         }
         if temperature is not None:
             payload["temperature"] = temperature
