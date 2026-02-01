@@ -52,15 +52,16 @@ async def test_planner_chat_endpoint(tmp_path, monkeypatch):
     app.dependency_overrides[get_redis] = lambda: None
     app.dependency_overrides[PlannerService.from_dependency] = lambda: planner_service
 
-    transport = ASGITransport(app=app, lifespan="on")
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/planner/chat",
-            json={
-                "messages": [{"role": "user", "content": "Create a workflow plan."}],
-                "uploaded_files": [],
-            },
-        )
+    transport = ASGITransport(app=app)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/planner/chat",
+                json={
+                    "messages": [{"role": "user", "content": "Create a workflow plan."}],
+                    "uploaded_files": [],
+                },
+            )
 
     assert response.status_code == 200
     payload = response.json()
