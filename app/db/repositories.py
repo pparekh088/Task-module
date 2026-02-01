@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ class PlanningRepository:
             db.add(session)
         session.status = status
         session.latest_plan_json = plan_json
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(session)
         return session
